@@ -1,5 +1,7 @@
 # IV-2-12 The Producer-Consumer Problem
 
+[Монгол хэл / Mongolian](README.mn.md)
+
 F.CSM302 Operating Systems, Assignment 1 (BD1).
 Textbook: Operating System Concepts, Chapter 7 Synchronization Examples, Programming Project 4.
 UI: Buffer animation.
