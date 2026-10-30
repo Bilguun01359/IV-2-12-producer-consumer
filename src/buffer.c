@@ -6,22 +6,28 @@
 
 static buffer_item buffer[MAX_BUFFER_SIZE];
 static int size = 0;
-static int in = 0;
-static int out = 0;
-static int count = 0;
+static int use_mutex = 1;
+static volatile int in = 0;
+static volatile int out = 0;
+static volatile int count = 0;
+static long produced = 0;
+static long consumed = 0;
 static sem_t empty;
 static sem_t full;
 static pthread_mutex_t mutex;
 static _Thread_local char my_role = '?';
 static _Thread_local int my_id = 0;
 
-int buffer_init(int n) {
+int buffer_init(int n, int mutex_on) {
     if (n < 1 || n > MAX_BUFFER_SIZE)
         return -1;
     size = n;
+    use_mutex = mutex_on;
     in = 0;
     out = 0;
     count = 0;
+    produced = 0;
+    consumed = 0;
     if (sem_init(&empty, 0, n) != 0)
         return -1;
     if (sem_init(&full, 0, 0) != 0)
@@ -40,6 +46,16 @@ void buffer_destroy(void) {
 void buffer_set_thread(char role, int id) {
     my_role = role;
     my_id = id;
+}
+
+static void enter_section(void) {
+    if (use_mutex)
+        pthread_mutex_lock(&mutex);
+}
+
+static void leave_section(void) {
+    if (use_mutex)
+        pthread_mutex_unlock(&mutex);
 }
 
 static int take(sem_t *s) {
@@ -64,14 +80,15 @@ int insert_item(buffer_item item) {
         return -1;
     if (take(&empty) != 0)
         return -1;
-    pthread_mutex_lock(&mutex);
+    enter_section();
     int slot = in;
     buffer[slot] = item;
-    in = (in + 1) % size;
-    count++;
+    in = (slot + 1) % size;
+    count = count + 1;
+    __atomic_fetch_add(&produced, 1, __ATOMIC_RELAXED);
     printf("[PUT] producer=%d item=%d slot=%d count=%d\n", my_id, item, slot, count);
     fflush(stdout);
-    pthread_mutex_unlock(&mutex);
+    leave_section();
     sem_post(&full);
     return 0;
 }
@@ -81,14 +98,24 @@ int remove_item(buffer_item *item) {
         return -1;
     if (take(&full) != 0)
         return -1;
-    pthread_mutex_lock(&mutex);
+    enter_section();
     int slot = out;
     *item = buffer[slot];
-    out = (out + 1) % size;
-    count--;
+    out = (slot + 1) % size;
+    count = count - 1;
+    __atomic_fetch_add(&consumed, 1, __ATOMIC_RELAXED);
     printf("[GET] consumer=%d item=%d slot=%d count=%d\n", my_id, *item, slot, count);
     fflush(stdout);
-    pthread_mutex_unlock(&mutex);
+    leave_section();
     sem_post(&empty);
     return 0;
+}
+
+int buffer_stats(long *p, long *c, int *n) {
+    enter_section();
+    *p = __atomic_load_n(&produced, __ATOMIC_RELAXED);
+    *c = __atomic_load_n(&consumed, __ATOMIC_RELAXED);
+    *n = count;
+    leave_section();
+    return (*p - *c == *n) && *n >= 0 && *n <= size;
 }
