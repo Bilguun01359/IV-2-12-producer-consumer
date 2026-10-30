@@ -37,7 +37,10 @@ static void *producer(void *param) {
         else
             random_sleep(&seed);
         item = (buffer_item)(rand_r(&seed) % 1000);
-        if (insert_item(item))
+        int r = insert_item(item);
+        if (r > 0)
+            break;
+        if (r < 0)
             fprintf(stderr, "[ERROR] producer=%d insert_item failed\n", id);
     }
     return NULL;
@@ -53,7 +56,10 @@ static void *consumer(void *param) {
             sem_wait(&c_token);
         else
             random_sleep(&seed);
-        if (remove_item(&item))
+        int r = remove_item(&item);
+        if (r > 0)
+            break;
+        if (r < 0)
             fprintf(stderr, "[ERROR] consumer=%d remove_item failed\n", id);
     }
     return NULL;
@@ -177,11 +183,6 @@ int main(int argc, char *argv[]) {
             left = sleep(left);
     }
 
-    long produced, consumed;
-    int in_buffer;
-    int ok = buffer_stats(&produced, &consumed, &in_buffer);
-    printf("[END] produced=%ld consumed=%ld in_buffer=%d invariant=%s\n",
-           produced, consumed, in_buffer, ok ? "OK" : "FAIL");
-    fflush(stdout);
+    buffer_close();
     return 0;
 }

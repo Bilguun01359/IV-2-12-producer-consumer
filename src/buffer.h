@@ -11,6 +11,6 @@ void buffer_destroy(void);
 void buffer_set_thread(char role, int id);
 int insert_item(buffer_item item);
 int remove_item(buffer_item *item);
-int buffer_stats(long *produced, long *consumed, int *in_buffer);
+int buffer_close(void);
 
 #endif

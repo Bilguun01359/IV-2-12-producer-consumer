@@ -12,6 +12,7 @@ static volatile int out = 0;
 static volatile int count = 0;
 static long produced = 0;
 static long consumed = 0;
+static volatile int finished = 0;
 static sem_t empty;
 static sem_t full;
 static pthread_mutex_t mutex;
@@ -28,6 +29,7 @@ int buffer_init(int n, int mutex_on) {
     count = 0;
     produced = 0;
     consumed = 0;
+    finished = 0;
     if (sem_init(&empty, 0, n) != 0)
         return -1;
     if (sem_init(&full, 0, 0) != 0)
@@ -63,11 +65,15 @@ static int take(sem_t *s) {
         return 0;
     if (errno != EAGAIN)
         return -1;
-    if (my_role == 'P')
-        printf("[WAIT] producer=%d\n", my_id);
-    else
-        printf("[WAIT] consumer=%d\n", my_id);
-    fflush(stdout);
+    enter_section();
+    if (!finished) {
+        if (my_role == 'P')
+            printf("[WAIT] producer=%d\n", my_id);
+        else
+            printf("[WAIT] consumer=%d\n", my_id);
+        fflush(stdout);
+    }
+    leave_section();
     while (sem_wait(s) == -1) {
         if (errno != EINTR)
             return -1;
@@ -81,6 +87,10 @@ int insert_item(buffer_item item) {
     if (take(&empty) != 0)
         return -1;
     enter_section();
+    if (finished) {
+        leave_section();
+        return 1;
+    }
     int slot = in;
     buffer[slot] = item;
     in = (slot + 1) % size;
@@ -99,6 +109,10 @@ int remove_item(buffer_item *item) {
     if (take(&full) != 0)
         return -1;
     enter_section();
+    if (finished) {
+        leave_section();
+        return 1;
+    }
     int slot = out;
     *item = buffer[slot];
     out = (slot + 1) % size;
@@ -111,11 +125,15 @@ int remove_item(buffer_item *item) {
     return 0;
 }
 
-int buffer_stats(long *p, long *c, int *n) {
+int buffer_close(void) {
     enter_section();
-    *p = __atomic_load_n(&produced, __ATOMIC_RELAXED);
-    *c = __atomic_load_n(&consumed, __ATOMIC_RELAXED);
-    *n = count;
+    finished = 1;
+    long p = __atomic_load_n(&produced, __ATOMIC_RELAXED);
+    long c = __atomic_load_n(&consumed, __ATOMIC_RELAXED);
+    int n = count;
+    int ok = (p - c == n) && n >= 0 && n <= size;
+    printf("[END] produced=%ld consumed=%ld in_buffer=%d invariant=%s\n", p, c, n, ok ? "OK" : "FAIL");
+    fflush(stdout);
     leave_section();
-    return (*p - *c == *n) && *n >= 0 && *n <= size;
+    return ok;
 }
